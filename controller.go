@@ -7,6 +7,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	appsinformers "k8s.io/client-go/informers/apps/v1"
@@ -120,12 +121,56 @@ func (c *controller) syncDeployment(ns, name string) error {
 	}
 
 	//create ingress
+	return createIngress(c.clientset, svc)
 
-	return nil
 }
 
 func depLabels(dep appsv1.Deployment) map[string]string {
 	return dep.Spec.Template.Labels
+}
+
+func createIngress(client kubernetes.Interface, svc corev1.Service) error {
+	pathType := networkingv1.PathTypePrefix
+	iclassn := "ingress"
+	ingress := networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      svc.Name,
+			Namespace: svc.Namespace,
+		},
+		Spec: networkingv1.IngressSpec{
+			IngressClassName: &iclassn,
+			Rules: []networkingv1.IngressRule{
+				{
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{
+								{
+									Path:     "/nginx",
+									PathType: &pathType,
+									Backend: networkingv1.IngressBackend{
+										Service: &networkingv1.IngressServiceBackend{
+											Name: svc.Name,
+											Port: networkingv1.ServiceBackendPort{
+												Number: 80,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, err := client.NetworkingV1().Ingresses(svc.Namespace).Create(context.Background(), &ingress, metav1.CreateOptions{})
+	if err != nil {
+		fmt.Printf("creating ingress %s\n", err.Error())
+		return err
+	}
+
+	return nil
 }
 
 func (c *controller) handleAdd(obj interface{}) {

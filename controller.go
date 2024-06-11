@@ -6,6 +6,8 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -67,6 +69,7 @@ func (c *controller) processItem() bool {
 	if shutdown {
 		return false
 	}
+
 	//forgot item in queue to prevent double processing
 	defer c.queue.Forget(item)
 	key, err := cache.MetaNamespaceKeyFunc(item)
@@ -78,6 +81,27 @@ func (c *controller) processItem() bool {
 	if err != nil {
 		fmt.Printf("splitting key %s\n", err.Error())
 		return false
+	}
+
+	// check if the object has been deleted from k8s cluster
+	ctx := context.Background()
+	_, err = c.clientset.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		fmt.Printf("handle delete event for dep %s\n", name)
+		// delete service
+		err := c.clientset.CoreV1().Services(ns).Delete(ctx, name, metav1.DeleteOptions{})
+		if err != nil {
+			fmt.Printf("deleting service %s, error %s\n", name, err.Error())
+			return false
+		}
+
+		err = c.clientset.NetworkingV1().Ingresses(ns).Delete(ctx, name, metav1.DeleteOptions{})
+		if err != nil {
+			fmt.Printf("deleting ingrss %s, error %s\n", name, err.Error())
+			return false
+		}
+
+		return true
 	}
 
 	err = c.syncDeployment(ns, name)
@@ -97,6 +121,13 @@ func (c *controller) syncDeployment(ns, name string) error {
 		fmt.Printf("getting deployment %s\n", err.Error())
 	}
 
+	// check if deployment has ekpose label
+	// if dep.ObjectMeta.Labels["ekspose"] != "true" {
+	// 	fmt.Printf("deployment %s does not have ekpose label\n", dep.Name)
+	// 	return nil
+	// }
+
+	// fmt.Printf("deployment has ekspose label, creating service and ingress\n")
 	//create service
 	// we have to modify this, to figure out the port
 	// our deployment's container is listening on
@@ -104,6 +135,9 @@ func (c *controller) syncDeployment(ns, name string) error {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      dep.Name,
 			Namespace: ns,
+			Labels: map[string]string{
+				"ekspose": "true",
+			},
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: depLabels(*dep),
@@ -136,6 +170,9 @@ func createIngress(client kubernetes.Interface, svc corev1.Service) error {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      svc.Name,
 			Namespace: svc.Namespace,
+			Labels: map[string]string{
+				"ekspose": "true",
+			},
 		},
 		Spec: networkingv1.IngressSpec{
 			IngressClassName: &iclassn,

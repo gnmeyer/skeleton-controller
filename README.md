@@ -29,5 +29,7 @@ nodes:
     protocol: TCP
 EOF`
 
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+
 
 kubectl port-forward --namespace=ingress-nginx service/ingress-nginx-controller 8080:80
